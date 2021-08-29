@@ -1,0 +1,793 @@
+---
+title: "Data Mining"
+output:
+  slidy_presentation:
+    css: style.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(kableExtra)
+library(tidyverse)
+library(caret)
+library(gridExtra)
+library(gtable)
+library(GGally)
+library(ROCR)
+
+```
+
+
+## Charles Book Club Case Solution {#class1 .slide1}
+<ul class="content">
+  <li>Nhóm thực hiện:</li>
+  <li>Nguyễn Ngọc Hòa: 18133014</li>
+  <li>Lê Đình Khang:   18133021</li>
+  <li>Trần Gia Nguyên: 18133036</li>
+</ul>
+
+## Giới thiệu {#class1}
+<h5>Câu lạc bộ sách Charles bán sách bằng cách tiếp thị trực tiếp, quảng cáo trên các phương tiện truyền thông, gửi thư. Hàng tháng họ gửi thư đến toàn bộ khách hàng có trong CSDL của họ.</h5>
+<h5> ==> Có thể tăng lượng khách hàng, doanh thu nhưng rất tốn kém ==> Lợi nhuận giảm dần theo thời gian </h5>
+<h4>Giải pháp:</h4>
+<h5>Xây dựng mô hình dự đoán khả năng mua sách mới phát hành của khách hàng để giảm bớt chi phí tiếp thị </h5>
+<ul>
+<li> Naive Bayes </li>
+<li> Logistic Regression </li>
+<li> KNN </li>
+</ul>
+<h5> Độ đo để đánh giá : ROC, AUC, TPR, FPR <h5>
+<h5> Tập dữ liệu: CharlesBookClub.csv (Link đến dataset: https://github.com/kwartler/Harvard_DataMining_Business_Student/blob/master/BookDataSets/CharlesBookClub.csv)</h5>
+<h5> Case study 21.1 Sách Data Mining for Busines Analytis Concepts, Techniques, and Applications in R by Kenneth C.Lichtendahl, Jr</h5>
+
+
+## Tổng quan về dữ liệu {#class1}
+
+<h5> INPUT: Thông tin mua hàng của khách hàng và một số thông tin liên quan đến lịch sử thói quen mua sách của khách hàng </h5>
+<h5> OUPUT: Biến Florence thể hiện khách hàng có mua sách The Art History of Florence hay không </h5>
+```{r}
+data <- read_csv("../Data/CharlesBookClub.csv")
+
+# Tạo các biến phân loại và đổi các biến phân loại thành kiểu factor 
+data$Gender <- factor(data$Gender, labels = c("Male", "Female"))
+data$Mcode  <- factor(data$Mcode,
+                       labels = c("$0-25", "$26-50", "$51-100", "$101-200", "$201+"),
+                       ordered = TRUE)
+data$Rcode  <- factor(data$Rcode,
+                       labels = c("0-2 months", "3-6 months", "7-12 months", "13+ months"),
+                       ordered = TRUE)
+data$Fcode  <- factor(data$Fcode,
+                       labels = c("1 book", "2 books", "3+ books"),
+                       ordered = TRUE)
+
+# Cập nhâp tên của từ khóa F để tránh nhầm lẫn với từ khóa False
+data <- data %>% rename(Fr = `F`)
+
+# Xóa những cột không cần thiết 
+data <- data %>%
+  select(-`Seq#`, -`ID#`, -Yes_Florence, -No_Florence) %>%
+  select(-Florence, everything()) # chuyển cột Florence thành cột sau cùng
+data
+
+```
+
+
+## Giải thích các biến có trong tập dữ liệu {#class1}
+```{r}
+variables <- c("Seq#","ID#", "Gender", "M", "R", "F", "FirstPurch", "ChildBks",
+          "YouthBks", "CookBks", "DoItYBks", "RefBks", "ArtBks", "GeoBks",
+          "ItalCook", "ItalAtlas", "ItalArt", "MCode", "RCode", "FCode", 
+          "Related Purchase", "Florence","Yes_Florence","No_Florence")
+descriptions <- c("Số thứ tự của khách hàng trong tập dữ liệu này.",
+                  "Số thứ tự của khách hàng trong cơ sở dữ liệu đầy đủ.",
+                 "0 = Nam, 1 = Nữ",
+                 "Tổng số tiền chi cho việc mua sách",
+                 "Số tháng kể từ lần cuối mua sách",
+                 "Tổng số lần mua sách",
+                 "Số tháng kể từ lần mua sách đầu tiên",
+                 "Số lần mua các quyển sách thuộc thể loại trẻ em",
+                 "Số lần mua các quyển sách thuộc thể loại thanh thiếu niên",
+                 "Số lần mua các quyển sách thuộc thể loại nấu nướng",
+                 "Số lần mua các quyển sách thuộc thể loại self-help",
+                 "Số lần mua các quyển sách thuộc thể loại tham khảo(atlas, từ điển,...)",
+                 "Số lần mua các quyển sách thuộc thể loại nghệ thuật",
+                 "Số lần mua các quyển sách thuộc thể loại địa lý",
+                 "Số lần mua quyển sách có tên 'Secrets of Italian Cooking'",
+                 "Số lần mua quyển sách có tên 'Historical Atlas of Italy'",
+                 "Số lần mua quyển sách có tên 'Italian Art'",
+                 "Được tính dựa vào biến M ở trên($0–$25 (Mcode = 1), $26–$50 (Mcode = 2), $51–$100 (Mcode = 3), $101–$200 (Mcode = 4), $201 trở lên (Mcode = 5))",
+                 "Được tính dựa vào biến R ở trên(0–2 tháng (Rcode = 1), 3–6 tháng (Rcode = 2), 7–12 tháng (Rcode = 3), 13 trở lên (Rcode = 4))",
+                 "Được tính dựa vào biến F ở trên(1 cuốn (Fcode = l), 2 cuốn (Fcode = 2),3 cuốn trở lên (Fcode = 3))",
+                 "Sô luong sách có liên quan da mua",
+                 "= 1 neu The Art History of Florence đuoc mua; = 0 neu không",
+                 "=1 nếu có mua sách The Art History of Florence ngược lại =0",
+                 "=1 nếu không mua sách The Art History of Florence ngược lại =0"
+                 )
+variables.descr <- 
+  data.frame(Variables = variables,
+             Descriptions = descriptions)
+kable(variables.descr, type = "html") %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+
+## Tóm tắt các biến định lượng {#class1}
+```{r}
+quantity_summary <- function(data, cols = NULL) {
+
+  if (is.null(cols)) {
+    num.cols <- colnames(select_if(data, is.numeric))
+  } else {
+    num.cols <- cols
+  }
+
+  data <- data %>% select(num.cols)
+
+    data.summmary <- data.frame(
+      Count = round(sapply(data, length), 3),
+      MissingValue = round((sapply(data, function(x) sum(length(which(is.na(x)))) / length(x)) * 100), 3),
+      Unique = round(sapply(data, function(x) length(unique(x))), 3),
+      Min. = round(sapply(data, min, na.rm = TRUE), 3),
+      `25 perc.` = round(sapply(data, function(x) quantile(x, 0.25, na.rm = TRUE)), 3),
+      Median = round(sapply(data, median, na.rm = TRUE), 3),
+      Mean = round(sapply(data, mean, na.rm = TRUE), 3),
+      `75 perc.` = round(sapply(data, function(x) quantile(x, 0.75, na.rm = TRUE)), 3),
+      Max = round(sapply(data, max, na.rm = TRUE), 3),
+      `Std.` = round(sapply(data, sd, na.rm = TRUE), 3)
+    ) %>%
+      rename(`1st Qrt.` = X25.perc.,
+             `3rd Qrt.` = X75.perc.,
+             `Miss Pct.` = MissingValue)
+
+    return(data.summmary)
+}
+
+data.summary<- quantity_summary(data = data)
+
+# Hiển thị ra bảng cho dễ nhìn
+kable(data.summary, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+
+```
+
+## Tóm tắt các biến phân loại {#class1}
+```{r}
+category_summary <- function(data, cols = NULL) {
+
+  if (is.null(cols)) {
+    cat.cols <- colnames(select_if(data, is.factor))
+  } else {
+    cat.cols <- cols
+  }
+
+  data <- data %>% select(cat.cols)
+
+  category.summary <- data.frame(
+     Count = round(sapply(data, length), 2),
+     Miss = round(sapply(data, function(x) sum(length(which(is.na(x)))) / length(x)), 3),
+     Card. = round(sapply(data, function(x) length(unique(x))), 3),
+     Mode = names(sapply(data, function(x) sort(table(x), decreasing = TRUE)[1])),
+     Mode_Freq = sapply(data, function(x) sort(table(x), decreasing = TRUE)[1]),
+     Mode_pct = round((sapply(data, function(x) sort(table(x), 
+                                                   decreasing = TRUE)[1] / length(x)) * 100), 1),
+     Mode_2 = names(sapply(data, function(x) sort(table(x), decreasing = TRUE)[2])),
+     Mode_Freq_2 = sapply(data, function(x) sort(table(x), decreasing = TRUE)[2]),
+     Mode_pct_2 = round((sapply(data, function(x) sort(table(x), 
+                                                     decreasing = TRUE)[2] / length(x)) * 100), 1)
+       )
+
+  category.summary$Mode <- gsub("^.*\\.","", category.summary$Mode)
+  category.summary$Mode_2 <- gsub("^.*\\.","", category.summary$Mode_2)
+
+  category.summary <- category.summary %>% 
+    rename(`Miss Pct.` = Miss,
+           `Mode Freq.` = Mode_Freq, 
+           `Mode Pct.` = Mode_pct,
+           `2nd Mode` = Mode_2,
+           `2nd Mode Freq.` = Mode_Freq_2, 
+           `2nd Mode Pct.` = Mode_pct_2
+           )
+
+    return(category.summary)
+}
+
+category.summary <- category_summary(data = data)
+# hiển thị
+kable(category.summary, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+## Phân vùng dữ liệu {#class1}
+<h5> Ta sẽ chia dữ liệu thành tập train và tập test với tỉ lệ 7:3</h5>
+<h5> Tập train </h5>
+
+```{r}
+set.seed(123)
+#Đầu tiên chuyển biến Florence về biến factor
+data$Florence <- factor(data$Florence, labels = c("No", "Yes"))
+
+# Chia dữ liệu theo tỉ lệ train/test là 80/20
+trainIndex <- createDataPartition(data$Florence, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Phân vùng dữ liệu
+data.train <- data[trainIndex, ]
+data.test <- data[-trainIndex, ]
+data.train
+```
+
+## Phân vùng dữ liệu {#class1}
+<h5> Tập test </h5>
+
+```{r}
+data.test
+```
+
+
+## Tỉ lệ mua và không mua sách ở 2 tập train và test {#class1}
+
+Để tránh việc phân vùng dữ liệu một cách thiên vị, ta kiểm tra lại tỉ lệ mua sách trên train và test:
+
+```{r}
+prop.table(table(data.train$Florence))
+#prop.table(table(data.valid$Florence))
+prop.table(table(data.test$Florence))
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+<h5> Tóm tắt thống kê </h5>
+```{r}
+train.quantity.summary<-quantity_summary(data = data.train)
+train.category.summary<-category_summary(data = data.train)
+kable(train.quantity.summary, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+```{r}
+kable(train.category.summary, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+
+- Trung bình của các yếu tố của người mua và không mua The Art History of Florence
+
+```{r}
+
+train.florence <- data.train %>%
+  select(-Gender, -Mcode, -Rcode, -Fcode) %>%
+  group_by(Florence) %>%
+  summarize_all(funs(mean = mean))
+
+florence.mean.table <- t(train.florence) %>%
+  `colnames<-`(.[1, ])
+
+florence.mean.table <- data.frame(florence.mean.table[-1, ])
+
+
+kable(florence.mean.table, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+<h5> Dùng kiểm định t-test để kiểm tra xem liệu có sự khác biệt về mặt thói quen mua hàng giữa người mua và người không mua sách mới hay không! </h5>
+```{r}
+florence.mean <- data.train %>%
+  select(-Gender, -Mcode, -Rcode, -Fcode)
+categories <- colnames(florence.mean[ , -16])
+
+florence.ttest <- data.frame(Category = categories, 
+                                 p_value = rep(0,15))
+
+
+for (i in 1:nrow(florence.ttest)) {
+
+  var <- categories[i]
+  
+  p <- t.test(get(var) ~ Florence, data = florence.mean)$p.value
+  
+  florence.ttest[i, 2] <- round(p, 4)
+}
+
+kable(florence.ttest, type = "html") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left", 
+                latex_options = "scale_down")
+```
+
+## Phân tích thăm dò tập train {#class1}
+<h5>Trực quan hóa biến Recency (lần cuối cùng mua hàng)</h5>
+```{r}
+theme_set(theme_classic())
+color <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+var="R"
+xlabel <- variables.descr[variables.descr$Variables == "R", 2]
+xmean <- data.summary[which(rownames(data.summary) == var), 7] 
+mean.intercept <- paste0(var, "_mean")
+
+data.train %>%
+    ggplot(aes_string(x = var, fill = "Florence", color = "Florence")) +
+    geom_histogram(aes(y =..density..), binwidth = 3, 
+                   position = "identity", alpha = 0.3) +
+    geom_density(alpha = 0.4) +
+    geom_vline(data = train.florence, 
+               aes_string(xintercept = mean.intercept, color = "Florence"),
+               linetype = "dashed") +
+    labs(title = xlabel, x = "", y = "Density") +
+    scale_color_manual(values = c(color[6], color[7])) +
+    scale_fill_manual(values = c(color[6], color[7])) +
+    theme(legend.position = c(0.9, 0.9))
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+<h5> Trực quan hóa biến Frequency(tần suất mua hàng)</h5>
+```{r}
+var="Fr"
+xlabel <- variables.descr[variables.descr$Variables == "F", 2]
+xmean <- data.summary[which(rownames(data.summary) == var), 7] 
+mean.intercept <- paste0(var, "_mean")
+
+data.train %>%
+    ggplot(aes_string(x = var, fill = "Florence", color = "Florence")) +
+    geom_histogram(aes(y =..density..), binwidth = 1, 
+                   position = "identity", alpha = 0.3) +
+    geom_density(alpha = 0.4) +
+    geom_vline(data = train.florence, 
+               aes_string(xintercept = mean.intercept, color = "Florence"),
+               linetype = "dashed") +
+    labs(title = xlabel, x = "", y = "Density") +
+    scale_color_manual(values = c(color[6], color[7])) +
+    scale_fill_manual(values = c(color[6], color[7])) +
+    theme(legend.position = c(0.9, 0.9))
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+<h5> Trực quan hóa biến Monetary (Chi tiêu cho việc mua sách) </h5>
+```{r}
+var="M"
+xlabel <- variables.descr[variables.descr$Variables == var, 2]
+xmean <- data.summary[which(rownames(data.summary) == var), 7] 
+mean.intercept <- paste0(var, "_mean")
+
+data.train %>%
+    ggplot(aes_string(x = var, fill = "Florence", color = "Florence")) +
+    geom_histogram(aes(y =..density..), binwidth = 6, 
+                   position = "identity", alpha = 0.6) +
+    geom_density(alpha = 0.4) +
+    geom_vline(data = train.florence, 
+               aes_string(xintercept = mean.intercept, color = "Florence"),
+               linetype = "dashed") +
+    labs(title = xlabel, x = "", y = "Density") +
+    scale_color_manual(values = c(color[6], color[7])) +
+    scale_fill_manual(values = c(color[6], color[7])) +
+    theme(legend.position = c(0.9, 0.9))
+```
+
+
+## Phân tích thăm dò tập train {#class1}
+<h5> Trực quan hóa biến First Purchase (lần đầu tiên mua sách)</h5>
+```{r}
+var="FirstPurch"
+xlabel <- variables.descr[variables.descr$Variables == var, 2]
+xmean <- data.summary[which(rownames(data.summary) == var), 7] 
+mean.intercept <- paste0(var, "_mean")
+
+data.train %>%
+    ggplot(aes_string(x = var, fill = "Florence", color = "Florence")) +
+    geom_histogram(aes(y =..density..), binwidth = 6, 
+                   position = "identity", alpha = 0.3) +
+    geom_density(alpha = 0.4) +
+    geom_vline(data = train.florence, 
+               aes_string(xintercept = mean.intercept, color = "Florence"),
+               linetype = "dashed") + 
+    labs(title = xlabel, x = "", y = "Density") +
+    scale_color_manual(values = c(color[6], color[7])) +
+    scale_fill_manual(values = c(color[6], color[7])) +
+    theme(legend.position = c(0.9, 0.9)) 
+```
+
+
+## Mức độ tương quan {#class1}
+
+Mức độ tương quan giữa các biến họ RFM
+
+```{r}
+corr.mat <- data.train %>%
+  select(R, Fr, M, FirstPurch, Florence) %>%
+  mutate(Florence = ifelse(Florence == "Yes", 1, 0))
+ggcorr(corr.mat, label = TRUE)
+```
+
+
+## Mức độ tương quan {#class1}
+
+```{r}
+books <- data.train %>%
+  select(contains("Bks"), contains("Ital"), `Related Purchase`, Florence) %>%
+  gather(key = "category", value = "count", contains("Bks"), contains("Ital"), `Related Purchase`)
+
+ggplot(books, aes(x = category, y = count, fill = Florence)) +
+  geom_boxplot() +
+  labs(title = "So luong sach da mua theo tung the loai", x = "") +
+  scale_fill_manual(values = c(color[6], color[7])) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+## Ma trận tương quan của tất cả các biến {#class1}
+
+```{r}
+corr.mat <- data.train %>%
+  dplyr::select(-contains("code")) %>%
+  mutate(Florence = ifelse(Florence == "Yes", 1, 0),
+         Gender = ifelse(Gender == "Female", 1, 0))
+ggcorr(corr.mat, label=TRUE, size = 2.5)
+```
+
+
+
+## Xây dựng mô hình {#class1}
+<ul>
+<li> Naive Bayes </li>
+<li>Logistic Regression </li>
+<li> KNN </li>
+</ul>
+
+
+## Mô hình KNN {#class1}
+<h5> Xây dựng mô hình KNN với các biến RFM_code, gender, FirstPurch và Relate.Purchase </h5>
+```{r}
+#Xác định phương thức huấn luyện
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 5, 
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary)
+knn.vars<-c("Gender", "Rcode", "Fcode", "Mcode", "FirstPurch","Related Purchase", "Florence")
+train.knn <- data.train[ , knn.vars]
+knn.models1<-train(Florence ~ ., data = train.knn,
+             method = "knn",
+             metric = "ROC", 
+             tuneGrid=expand.grid(k = 1:15),
+             preProcess = c("center", "scale"),
+             trControl = ctrl)
+knn.models1
+```
+
+
+## Mô hình KNN {#class1}
+<h5> Thêm 2 biến ArtBks và GeogBks vào mô hình. Chuyển đổi 2 biến về dạng phân loại (có mua và không mua)</h5>
+```{r}
+data.train$Art_1 <- factor(ifelse(data.train$ArtBks > 0, 1, 0))
+data.train$Geo_1 <- factor(ifelse(data.train$GeogBks > 0, 1, 0))
+knn.vars<-c("Gender", "Rcode", "Fcode", "Mcode", "FirstPurch","Related Purchase", "Art_1","Geo_1","Florence")
+train.knn <- data.train[ , knn.vars]
+
+knn.models2<-train(Florence ~ ., data = train.knn,
+             method = "knn",
+             metric = "ROC", 
+             tuneGrid=expand.grid(k = 1:15),
+             preProcess = c("center", "scale"),
+             trControl = ctrl)
+knn.models2
+```
+
+
+## Mô hình KNN {#class1}
+<h5> Thử biến đổi biến First Purch thành biến nhị phân với số tháng lớn hơn bằng 24 thì nhận giá trị 1 và ngược lại </h5>
+```{r}
+data.train$FirstPurch_2 <- factor(ifelse(data.train$FirstPurch >= 24, 1, 0))
+knn.vars<-c("Gender", "Rcode", "Fcode", "Mcode", "FirstPurch_2","Related Purchase", "Art_1","Geo_1","Florence")
+train.knn <- data.train[ , knn.vars]
+
+knn.models3<-train(Florence ~ ., data = train.knn,
+             method = "knn",
+             metric = "ROC", 
+             tuneGrid=expand.grid(k = 1:15),
+             preProcess = c("center", "scale"),
+             trControl = ctrl)
+knn.models3
+```
+
+
+
+## Mô hình Naive Bayes {#class1}
+
+Sử dụng các biến RFM Code và biến giới tính
+
+```{r}
+
+
+
+#Các biến sử dụng cho mô hình Naive Bayes
+
+nb.vars <- c("Gender", "Rcode","Fcode","Mcode", "Florence")
+
+
+train.nb <- data.train[ , nb.vars]
+
+levels(train.nb$Mcode)<-c("$0-50","$0-50","$51-100","$101-200","$201+")
+# Tạo một mảng các siêu tham số Laplace
+nbGrid <-  expand.grid(fL = c(0, 1, 5),
+                       usekernel = c(TRUE, FALSE), 
+                       adjust = c(0, 0.5, 1.0)
+                       )
+
+# train mô hình và tính xác suất priori 
+nb.model1 <- train(Florence ~ ., data = train.nb,
+             method = "nb",
+             metric = "ROC", 
+             tuneGrid = nbGrid,
+             trControl = ctrl)
+
+nb.model1
+```
+
+## Mô hình Naive Bayes {#class1}
+
+Thêm 2 yếu tố liên quan đến việc khách hàng có mua sách thuộc thể loại Nghệ thuật và địa lý hay không
+
+```{r}
+data.train$Art_1 <- factor(ifelse(data.train$ArtBks > 0, 1, 0))
+data.train$Geo_1 <- factor(ifelse(data.train$GeogBks > 0, 1, 0))
+
+nb2.vars <- c("Gender", "Rcode", "Fcode", "Mcode", "Art_1", "Geo_1", "Florence")
+train.nb=data.train[ , nb2.vars]
+levels(train.nb$Mcode)<-c("$0-50","$0-50","$51-100","$101-200","$201+")
+nb.model2 <- train(Florence ~ ., data =train.nb ,
+             method = "nb",
+             metric = "ROC", 
+             tuneGrid = nbGrid,
+             trControl = ctrl)
+
+nb.model2
+```
+
+## Mô hình Naive Bayes {#class1}
+
+Thêm yếu tố liên quan đến khách hàng có mua sách trong vòng 24 tháng trở lại đây hay không
+
+```{r}
+data.train$FirstPurch_2 <- factor(ifelse(data.train$FirstPurch >= 24, 1, 0))
+
+nb3.vars <- c("Gender", "Rcode", "Fcode", "Mcode", "Art_1", "Geo_1", "FirstPurch_2", "Florence")
+train.nb=data.train[ , nb3.vars]
+levels(train.nb$Mcode)<-c("$0-50","$0-50","$51-100","$101-200","$201+")
+
+# build model and generate a-priori probabilities
+nb.model3 <- train(Florence ~ ., data = train.nb,
+             method = "nb",
+             metric = "ROC", 
+             tuneGrid = nbGrid,
+             trControl = ctrl)
+
+nb.model3
+```
+
+
+
+## Mô hình Logistic Regression {#class1}
+
+sử dụng tất cả các biến ngoại trừ các biến RFM_Code và số lần mua gần đây vì chúng có mức độ tương quan cao với số lượng mua ở một số thể loại cụ thê
+
+```{r}
+set.seed(1)
+#Sử dụng 5-folds crossvalidation để tính điểm ROC
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 5, 
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary)
+train.glm <- data.train %>%
+  select(-contains("Code"), 
+         -contains("_"),
+         -`Related Purchase`)
+
+#Build model và tạo ra một chuỗi xác suất priori
+glm.models <- train(Florence ~ ., data = train.glm,
+                 method = "glm",
+                 metric = "ROC",
+                 trControl = ctrl)
+
+summary(glm.models)
+```
+
+
+## Mô hình Logistic Regression {#class1}
+
+Ngoài ra, chúng ta có thể thử xem các biến thể khác của logistic regression bằng cách sử dụng stepwise selection
+
+```{r}
+glm.step <- glm(Florence ~ ., data = train.glm, family = "binomial")
+glm.forward <- step(glm.step, direction = "forward", trace = 0)
+glm.backward <- step(glm.step, direction = "backward", trace = 0)
+glm.both <- step(glm.step, direction = "both", trace = 0)
+glm.for.models <- train(glm.forward$formula, data = train.glm,
+                 method = "glm",
+                 metric = "ROC", 
+                 trControl = ctrl)
+
+glm.back.models <- train(glm.backward$formula, data = train.glm,
+                 method = "glm",
+                 metric = "ROC", 
+                 trControl = ctrl)
+
+glm.both.models <- train(glm.both$formula, data = train.glm,
+                 method = "glm",
+                 metric = "ROC", 
+                 trControl = ctrl)
+glm.for.models$results
+glm.back.models$results
+glm.both.models$results
+```
+
+
+## Mô hình Logistic Regression {#class1}
+```{r}
+glm.for.models$finalModel
+glm.back.models$finalModel
+glm.both.models$finalModel
+```
+
+
+## Lựa chọn mô hình {#class1}
+<h4> Dựa vào kết quả phân tích ta sẽ lựa chọn </h4>
+<ul>
+<li> Mô hình Naive Bayes với công thức như sau : Florence ~ Gender + Rcode + Fcode + Mcode + FirstPurch_2 + Art_1 + Geo_1 </li>
+<li> Mô hình Logistic Regression với công thức như sau: Florence ~ Gender + M + R + Fr + ChildBks + CookBks + DoItYBks + ArtBks + GeogBks + YouthBks + ItalArt và sử dụng biến thể forward & backward stepwise</li>
+<li> Mô hình Knn với công thức như sau: Florence ~ Gender + Rcode + Fcode + Mcode + FirstPurch + Related Purchase + Art_1 + Geo_1 </li>
+</ul>
+
+
+## Kiểm tra hiệu suất mô hình trên tập test {#class1}
+<h5> Đánh giá mô hình Naive Bayes bằng cách vẽ đồ thị TPR, FPR và ROC Score trên tập train và test </h5>
+```{r}
+plot_roc <- function(train_roc, train_auc, test_roc, test_auc) {
+  
+  plot(train_roc, col = "blue", lty = "solid", main = "", lwd = 2,
+       xlab = "False Positive Rate",
+       ylab = "True Positive Rate")
+  plot(test_roc, col = "red", lty = "dashed", lwd = 2, add = TRUE)
+  abline(c(0,1))
+  train.legend <- paste("Training AUC = ", round(train_auc, digits = 3))
+  test.legend <- paste("Test AUC = ", round(test_auc, digits = 3))
+  legend("bottomright", legend = c(train.legend, test.legend),
+         lty = c("solid", "dashed"), lwd = 2, col = c("blue", "red"))
+  
+}
+
+#Xác định các biến dùng với Naive Bayes
+nb3.vars <- c("Gender", "Rcode", "Fcode", "Mcode", "Art_1", "Geo_1", "FirstPurch_2", "Florence")
+
+# Xử lý dữ liệu đầu vào cho mô hình trên tập test
+data.test$Art_1 <- factor(ifelse(data.test$ArtBks > 0, 1, 0))
+data.test$Geo_1 <- factor(ifelse(data.test$GeogBks > 0, 1, 0))
+data.test$FirstPurch_2 <- factor(ifelse(data.test$FirstPurch >= 24, 1, 0))
+
+train.nb=data.train[ , nb3.vars]
+levels(train.nb$Mcode)<-c("$0-50","$0-50","$51-100","$101-200","$201+")
+test.nb=data.test[ , nb3.vars]
+levels(test.nb$Mcode)<-c("$0-50","$0-50","$51-100","$101-200","$201+")
+
+
+# Độ chính xác cho mô hình NaiveBayes tốt nhất trên tập train:
+data.train$nb_prob <- predict(nb.model3, newdata = train.nb, type = "prob")[ , 2]
+data.train.nb.pred <- prediction(data.train$nb_prob, data.train$Florence)
+data.train.nb.auc  <- as.numeric(performance(data.train.nb.pred, "auc")@y.values)
+data.train.roc <- performance(data.train.nb.pred, "tpr", "fpr")
+
+# Độ chính xác cho mô hình NaiveBayes tốt nhất trên tập test:
+data.test$nb_prob <- predict(nb.model3, newdata = test.nb, type = "prob")[ , 2]
+data.test.nb.pred <- prediction(data.test$nb_prob, data.test$Florence)
+data.test.nb.auc  <- as.numeric(performance(data.test.nb.pred, "auc")@y.values)
+data.test.roc <- performance(data.test.nb.pred, "tpr", "fpr")
+
+# Vẽ đồ thị AUC/ROC
+plot_roc(train_roc = data.train.roc,
+         train_auc = data.train.nb.auc,
+         test_roc = data.test.roc,
+         test_auc = data.test.nb.auc)
+
+```
+
+
+
+## Kiểm tra hiệu suất mô hình trên tập Test {#class1}
+<h5> Đánh giá mô hình KNN bằng cách vẽ đồ thị TPR, FPR và ROC Score trên tập train và test </h5>
+```{r}
+# Xác định các biến dùng với knn
+knn.vars<-c("Gender", "Rcode", "Fcode", "Mcode", "FirstPurch","Related Purchase", "Art_1","Geo_1","Florence")
+
+# Biến đổi các biến trên tập test
+data.test$Art_1 <- factor(ifelse(data.test$ArtBks > 0, 1, 0))
+data.test$Geo_1 <- factor(ifelse(data.test$GeogBks > 0, 1, 0))
+
+#Tính toán các độ đo liên quan đến ROC trên tập train
+data.train$knn_prob <- predict(knn.models2, newdata = data.train[ , knn.vars], type = "prob")[ , 2]
+data.train.knn.pred <- prediction(data.train$knn_prob, data.train$Florence)
+data.train.knn.auc  <- as.numeric(performance(data.train.knn.pred, "auc")@y.values)
+data.train.roc <- performance(data.train.knn.pred, "tpr", "fpr")
+
+#Tính toán các độ đo liên quan đến ROC trên tập test
+data.test$knn_prob <- predict(knn.models2, newdata = data.test[ , knn.vars], type = "prob")[ , 2]
+data.test.knn.pred <- prediction(data.test$knn_prob, data.test$Florence)
+data.test.knn.auc  <- as.numeric(performance(data.test.knn.pred, "auc")@y.values)
+data.test.roc <- performance(data.test.knn.pred, "tpr", "fpr")
+
+# vẽ đồ thị ROC/AUC scores
+plot_roc(train_roc = data.train.roc,
+         train_auc = data.train.knn.auc,
+         test_roc = data.test.roc,
+         test_auc = data.test.knn.auc)
+```
+
+
+## Kiểm tra hiệu suất mô hình trên tập Test {#class1}
+<h5> Đánh giá mô hình Logistic Regression bằng cách vẽ đồ thị TPR, FPR và ROC Score trên tập train và test </h5>
+```{r}
+# Công thức dùng cho logistic regression
+glm.form<-{Florence ~ Gender + M + R + Fr + ChildBks + CookBks + DoItYBks + ArtBks + GeogBks + YouthBks + ItalArt}
+
+# Tính toán các độ đo liên quan đến ROC trên tập train
+data.train$glm_prob <- predict(glm.both.models, newdata = data.train, type = "prob")[ , 2]
+data.train.glm.pred <- prediction(data.train$glm_prob, data.train$Florence)
+data.train.glm.auc  <- as.numeric(performance(data.train.glm.pred, "auc")@y.values)
+data.train.glm.roc <- performance(data.train.glm.pred, "tpr", "fpr")
+
+# Tính toán các độ đo liên quan đến ROC trên tập test
+data.test$glm_prob <- predict(glm.both.models, newdata = data.test, type = "prob")[ , 2]
+data.test.glm.pred <- prediction(data.test$glm_prob, data.test$Florence)
+data.test.glm.auc  <- as.numeric(performance(data.test.glm.pred, "auc")@y.values)
+data.test.glm.roc <- performance(data.test.glm.pred, "tpr", "fpr")
+
+# vẽ đồ thị ROC/AUC scores
+plot_roc(train_roc = data.train.glm.roc,
+         train_auc = data.train.glm.auc,
+         test_roc = data.test.glm.roc,
+         test_auc = data.test.glm.auc)
+```
+
+## Kết quả đạt được {#class1}
+
+<ul>
+<li> Sau khi xem xét hiệu suất của các mô hình trên tập test , chúng ta thấy mô hình hồi quy logistic hoạt động tốt hơn 2 mô hình còn lại và cung cấp cho chúng ta cơ hội giảm ngân sách marketing trực tiếp bằng cách nhắm mục tiêu các thành viên được dự đoán là có nhiều khả năng mua bản phát hành sách mới nhất. </li>
+<li> Về các yếu tố dự đoán, chúng ta thấy rằng nam giới có nhiều khả năng mua hàng hơn nữ giới, việc mua sách thuộc các thể loại như Nghệ thuật và Địa lý làm tăng xác suất mua sách và mua sách thể loại Cooking và DIY có tác động tiêu cực.</li>
+<li> Nên sử dụng kết hợp 2 mô hình hồi quy logisitic và mô hình Naive Bayes để dự đoán xu hướng mua hàng của cơ sở dữ liệu khách hàng và lưu trữ các dự đoán riêng lẻ và kết hợp của họ.</li>
+</ul>
+
+
+## Hạn chế và hướng phát triển {#class1}
+
+Hướng phát triển
+
+<ul>
+<li> Mô hình của chúng ta có thể được cải thiện bằng cách tính vào tổng số tiền mua hàng mà người mua đã thực hiện khi phản hồi chiến dịch. Mặc dù nó sẽ không cải thiện dự đoán của một khách hàng, nhưng nó sẽ giúp cô lập khách hàng hơn nữa để tập trung các nỗ lực tiếp thị bằng cách sử dụng xác suất mua hàng cùng với giá trị mua hàng được dự đoán để tính lợi nhuận kỳ vọng từ mỗi khách hàng. Sau đó, mẫu của chúng ta có thể được xếp hạng dựa trên lợi nhuận dự kiến.</li>
+
+<li>Ngoài ra, các biến số hành vi khác có thể hữu ích, chẳng hạn như thời gian trung bình giữa những người mua hàng của thành viên (nhịp độ mua hàng chung của khách hàng là gì?), Chi tiêu trong 90 ngày qua (hoặc giá trị theo chu kỳ khác) và mua hàng trong 90 ngày qua ngày (hoặc giá trị theo chu kỳ khác). </li>
+</ul>
+
+
+## Hạn chế và hướng phát triển {#class1}
+
+Hạn chế
+
+<ul>
+<li> KNN gần như gặp hiện tượng overfitting, để khắc phục có thể chia tập dữ liệu validation từ tập dữ liệu gốc.</li>
+
+<li>Cách lựa chọn các tham số cũng như thuật toán còn phụ thuộc nhiều vào yếu tố chủ quan, độ chính xác không cao. </li>
+
+<li>Thời gian và kiến thức hạn hẹp, không tránh khỏi những sai sót trong quá trình trình bày ý tưởng cũng như hiện thực hóa ý tưởng đó.</li>
+</ul>
